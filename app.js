@@ -6,8 +6,16 @@ const width = 8;
 
 
 let playerGo = 'black';
+// The position on the board the piece starts from
+let startPositionId = -1;
+let draggedElement;
 
-playerDisplay.textContent = playerGo;
+let taken, takenByOpponent;
+let targetId, startId, idInterval;
+let startRow, startCol, targetRow, targetCol;
+// How far apart are the rows and how far apart are the columns
+let rowInterval, colInterval;
+
 
 const startPieces = [
     rook, bishop, knight, queen, king, knight, bishop, rook,
@@ -20,6 +28,21 @@ const startPieces = [
     rook, bishop, knight, queen, king, knight, bishop, rook
 ];
 
+let allSquares;
+
+
+function init() {
+    playerDisplay.textContent = playerGo;
+
+    createBoard();
+
+    allSquares = document.querySelectorAll('.square');
+    allSquares.forEach(square => {
+        square.addEventListener('dragstart', dragStart);
+        square.addEventListener('dragover', dragOver);
+        square.addEventListener('drop', dragDrop);
+    });
+}
 
 function createBoard() {
     startPieces.forEach((startPiece, i) => {
@@ -52,23 +75,6 @@ function createBoard() {
 }
 
 
-createBoard();
-
-
-
-// The position on the board the piece starts from
-let startPositionId = -1;
-let draggedElement;
-
-const allSquares = document.querySelectorAll('.square');
-
-allSquares.forEach(square => {
-    square.addEventListener('dragstart', dragStart);
-    square.addEventListener('dragover', dragOver);
-    square.addEventListener('drop', dragDrop);
-});
-
-
 function dragStart(e) {
     draggedElement = e.target;
     startPositionId = draggedElement.parentNode.getAttribute('square-id');
@@ -85,13 +91,13 @@ function dragDrop(e) {
     //
     e.stopPropagation();
 
-    const correctGo = draggedElement.firstChild.classList.contains(playerGo + '-piece');
-    const opponentGo = playerGo === 'black' ? 'white' : 'black';
-    const taken = e.target.classList.contains('piece');
-    const takenByOpponent = e.target.firstChild?.classList.contains(opponentGo + '-piece');
+    correctGo = draggedElement.firstChild.classList.contains(playerGo + '-piece');
+    opponentGo = playerGo === 'black' ? 'white' : 'black';
+    taken = e.target.classList.contains('piece');
+    takenByOpponent = e.target.firstChild?.classList.contains(opponentGo + '-piece');
 
     if (correctGo) {
-        if (isValidMove(e.target, taken, takenByOpponent)) {
+        if (isValidMove(e.target)) {
             // This will immediately reset the info display when a valid move is made before the notification reset timer clears the last notification
             notifyPlayer('', false);
             if (!taken) {
@@ -122,85 +128,86 @@ function changePlayer() {
 }
 
 
-function isValidMove(target, taken, takenByOpponent) {
-    const targetId = Number(target.getAttribute('square-id') || target.parentNode.getAttribute('square-id'));
-    const startId = Number(startPositionId);
-    const idInterval = Math.abs(targetId - startId);
-    const piece = draggedElement.id;
+// Move validation lookup object
+const validMoves = {
+    'pawn': () => {
+        let direction = 1;
+        // Flip the rows depending on who's playing. 
+        if (playerGo === 'black') {
+            startRow = width - 1 - startRow;
+            targetRow = width - 1 - targetRow;
+            direction = -1;
+        }
+        // Check if the pawn's movement is blocked by any piece
+        const blockedByPiece = Boolean(document.querySelector(`[square-id="${startId + direction * width}"]`).firstChild);
 
-    let startRow = Math.floor(startId / width);
-    let startCol = startId % width;
-    let targetRow = Math.floor(targetId / width);
-    let targetCol = targetId % width;
+        return targetRow > startRow && ((!taken && !blockedByPiece && startRow === 1 && idInterval === 2 * width) || (!taken && idInterval === width) || (takenByOpponent && (idInterval === width - 1 || idInterval === width + 1)));
+    },
+    'rook': () => {
+        // Successful vertical movement or horizontal movement
+        if ((rowInterval !== 0 && colInterval === 0) || (rowInterval === 0 && colInterval !== 0)) {
+            // Check if the rook's movement is blocked by any piece
+            for (let i = Math.abs(rowInterval ? rowInterval : colInterval) - 1; i > 0; --i) {
+                const id = rowInterval ? startId + Math.sign(rowInterval) * i * width : startId + Math.sign(colInterval) * i;
+                if (Boolean(document.querySelector(`[square-id="${id}"]`).firstChild)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return false;
+    },
+    'bishop': () => {
+        // Successful diagonal movement
+        if (Math.abs(rowInterval) === Math.abs(colInterval) && rowInterval !== 0) {
+            // Check if the bishop's movement is blocked by any piece
+            for (let i = Math.abs(rowInterval) - 1; i > 0; --i) {
+                if (Boolean(document.querySelector(`[square-id="${startId + Math.sign(rowInterval) * i * width + Math.sign(colInterval) * i
+                    }"]`).firstChild)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return false;
+    },
+    'knight': () => {
+        // Two steps up or down, one step right or left - Two steps right or left, one step up or down
+        return (Math.abs(rowInterval) === 2 && Math.abs(colInterval) === 1) || (Math.abs(colInterval) === 2 && Math.abs(rowInterval) === 1);
+    },
+    'queen': () => {
+        // A queen is simply just a rook and a bishop at the same time
+        // return this.rook() || this.bishop();
+        return (validMoves['rook']() || validMoves['bishop']());
+    },
+    'king': () => {
+        // King moves one step anywhere
+        return (idInterval === width || idInterval === width - 1 || idInterval === width + 1 || idInterval === 1);
+    }
+}
+
+
+function isValidMove(target) {
+    targetId = Number(target.getAttribute('square-id') || target.parentNode.getAttribute('square-id'));
+    startId = Number(startPositionId);
+    idInterval = Math.abs(targetId - startId);
+
+    startRow = Math.floor(startId / width);
+    startCol = startId % width;
+    targetRow = Math.floor(targetId / width);
+    targetCol = targetId % width;
 
     // How far apart are the rows and how far apart are the columns
-    const rowInterval = targetRow - startRow;
-    const colInterval = targetCol - startCol;
+    rowInterval = targetRow - startRow;
+    colInterval = targetCol - startCol;
 
-    const validMoves = {
-        'pawn': () => {
-            let direction = 1;
-            // Flip the rows depending on who's playing. 
-            if (playerGo === 'black') {
-                startRow = width - 1 - startRow;
-                targetRow = width - 1 - targetRow;
-                direction = -1;
-            }
-            // Check if the pawn's movement is blocked by any piece
-            const blockedByPiece = Boolean(document.querySelector(`[square-id="${startId + direction * width}"]`).firstChild);
-
-            return targetRow > startRow && ((!taken && !blockedByPiece && startRow === 1 && idInterval === 2 * width) || (!taken && idInterval === width) || (takenByOpponent && (idInterval === width - 1 || idInterval === width + 1)));
-        },
-        'rook': () => {
-            // Successful vertical movement or horizontal movement
-            if ((rowInterval !== 0 && colInterval === 0) || (rowInterval === 0 && colInterval !== 0)) {
-                // Check if the rook's movement is blocked by any piece
-                for (let i = Math.abs(rowInterval ? rowInterval : colInterval) - 1; i > 0; --i) {
-                    const id = rowInterval ? startId + Math.sign(rowInterval) * i * width : startId + Math.sign(colInterval) * i;
-                    if (Boolean(document.querySelector(`[square-id="${id}"]`).firstChild)) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-            return false;
-        },
-        'bishop': () => {
-            // Successful diagonal movement
-            if (Math.abs(rowInterval) === Math.abs(colInterval) && rowInterval !== 0) {
-                // Check if the bishop's movement is blocked by any piece
-                for (let i = Math.abs(rowInterval) - 1; i > 0; --i) {
-                    if (Boolean(document.querySelector(`[square-id="${startId + Math.sign(rowInterval) * i * width + Math.sign(colInterval) * i
-                        }"]`).firstChild)) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-            return false;
-        },
-        'knight': () => {
-            // Two steps up or down, one step right or left - Two steps right or left, one step up or down
-            return (Math.abs(rowInterval) === 2 && Math.abs(colInterval) === 1) || (Math.abs(colInterval) === 2 && Math.abs(rowInterval) === 1);
-        },
-        'queen': () => {
-            // A queen is simply just a rook and a bishop at the same time
-            // return this.rook() || this.bishop();
-            return (validMoves['rook']() || validMoves['bishop']());
-        },
-        'king': () => {
-            // King moves one step anywhere
-            return (idInterval === width || idInterval === width - 1 || idInterval === width + 1 || idInterval === 1);
-        }
-    }
-
-    return validMoves[piece]();
+    return validMoves[draggedElement.id]();
 }
 
 function checkWin() {
     const kings = document.querySelectorAll('#gameboard #king');
 
-    // If there is one less king piece then the current player wins: The current player only changes when this function returns false
+    // If there is one less king piece then the current player wins: Player turns only change when this function returns false
     if (kings.length < 2) {
         notifyPlayer(`${playerGo} player wins`, false);
         playerDisplay.parentElement.textContent = '';
@@ -215,3 +222,6 @@ function checkWin() {
 
     return false;
 }
+
+
+init();
